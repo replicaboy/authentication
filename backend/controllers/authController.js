@@ -3,12 +3,18 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 
-// Nodemailer Transporter Setup
+// 🚨 UPDATE: Nodemailer Transporter Setup (Render Cloud Fix)
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // Port 465 के लिए true रखना ज़रूरी है
     auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS // 🚨 यहाँ 16-digit App Password ही होना चाहिए
+        pass: process.env.EMAIL_PASS // 16-digit App Password 
+    },
+    tls: {
+        // Render जैसे क्लाउड सर्वर पर कनेक्शन ब्लॉक (Timeout) होने से बचाने के लिए:
+        rejectUnauthorized: false
     }
 });
 
@@ -35,7 +41,7 @@ exports.signup = async (req, res) => {
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: email,
-            subject: 'Your OTP for Registration',
+            subject: 'Your OTP for Registration - Chodu Cid Chat',
             text: `Your OTP is: ${otp}. It is valid for 10 minutes.`
         };
 
