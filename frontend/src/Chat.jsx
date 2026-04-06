@@ -4,7 +4,7 @@ import { Send, Menu, X, Search, MoreVertical, Phone, Video, Paperclip, Camera, S
 import { io } from 'socket.io-client';
 import axios from 'axios';
 
-const BACKEND_URL = 'https://scaling-orbit-v6w4677vrxr52p96w-5000.app.github.dev';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 const socket = io(BACKEND_URL); 
 
 const Chat = ({ onLogout }) => {
@@ -13,26 +13,33 @@ const Chat = ({ onLogout }) => {
   const [chats, setChats] = useState([]);
   const [selectedChat, setSelectedChat] = useState(null); 
   
+  // Profile States
   const [myName, setMyName] = useState(localStorage.getItem('candy_userName') || 'Agent'); 
   const [myProfilePic, setMyProfilePic] = useState(localStorage.getItem('candy_userPic') || null); 
   const myEmail = localStorage.getItem('candy_email'); 
   const [myId, setMyId] = useState(null); 
   
+  // Friends & Notifications States
   const [friends, setFriends] = useState([]);
   const [friendRequests, setFriendRequests] = useState([]);
   const [addEmail, setAddEmail] = useState('');
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showChatMenu, setShowChatMenu] = useState(false); // Clear chat menu के लिए
+  const [showChatMenu, setShowChatMenu] = useState(false);
   
   // File Attachment States
   const [selectedFile, setSelectedFile] = useState(null);
   const [filePreview, setFilePreview] = useState(null);
+
+  // Typing Effect State
+  const [isTyping, setIsTyping] = useState(false);
+  const typingTimeout = useRef(null); 
   
+  // Refs
   const scrollRef = useRef(null);
   const fileInputRef = useRef(null);
   const attachmentInputRef = useRef(null);
 
-  // Profile Fetching
+  // --- Profile Fetching ---
   const fetchProfile = async () => {
     if (!myEmail) return;
     try {
@@ -50,6 +57,7 @@ const Chat = ({ onLogout }) => {
   };
   useEffect(() => { fetchProfile(); }, []);
 
+  // --- Save Profile to DB ---
   const saveProfileToDB = async (updatedName, updatedPic) => {
     if (!myEmail) return;
     try {
@@ -69,7 +77,7 @@ const Chat = ({ onLogout }) => {
   };
   const currentRoomId = getRoomId();
 
-  // Chat History Fetching
+  // --- Chat History Fetching ---
   useEffect(() => {
     const fetchChatHistory = async () => {
       if (!currentRoomId) return;
@@ -81,31 +89,45 @@ const Chat = ({ onLogout }) => {
     fetchChatHistory();
   }, [currentRoomId]);
 
-  // Socket Listeners (Receive, Delete, Clear)
+  // --- Socket Listeners (Receive, Delete, Clear, Typing) ---
   useEffect(() => {
+    // Message Receive
     socket.on('receive_message', (data) => {
       setChats((prev) => prev.some(msg => msg.id === data.id) ? prev : [...prev, data]);
     });
     
+    // Message Delete
     socket.on('message_deleted', (deletedId) => {
       setChats((prev) => prev.filter(msg => msg.id !== deletedId));
     });
 
+    // Chat Clear
     socket.on('chat_cleared', (clearedRoomId) => {
       if (currentRoomId === clearedRoomId) setChats([]);
       else setChats((prev) => prev.filter(msg => msg.chatId !== clearedRoomId));
+    });
+
+    // Typing Status
+    socket.on('user_typing', (roomId) => {
+      if (roomId === currentRoomId) setIsTyping(true);
+    });
+    socket.on('user_stopped_typing', (roomId) => {
+      if (roomId === currentRoomId) setIsTyping(false);
     });
 
     return () => { 
       socket.off('receive_message'); 
       socket.off('message_deleted'); 
       socket.off('chat_cleared'); 
+      socket.off('user_typing');
+      socket.off('user_stopped_typing');
     };
   }, [currentRoomId]);
 
+  // --- Auto Scroll ---
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [chats, selectedChat]);
+  }, [chats, selectedChat, isTyping]);
 
   // --- File Attachment Handler ---
   const handleAttachment = (e) => {
@@ -126,7 +148,23 @@ const Chat = ({ onLogout }) => {
     reader.readAsDataURL(file);
   };
 
-  // --- Send Message (With File Support) ---
+  // --- Typing Handler ---
+  const handleTyping = (e) => {
+    setMessage(e.target.value);
+    
+    if (!currentRoomId) return;
+    
+    // Tell backend we are typing
+    socket.emit('typing', currentRoomId);
+    
+    // Stop typing after 2 seconds of inactivity
+    clearTimeout(typingTimeout.current);
+    typingTimeout.current = setTimeout(() => {
+      socket.emit('stop_typing', currentRoomId);
+    }, 2000);
+  };
+
+  // --- Send Message ---
   const handleSend = async (e) => {
     e.preventDefault();
     if ((!message.trim() && !selectedFile) || !selectedChat || !currentRoomId) return;
@@ -147,6 +185,10 @@ const Chat = ({ onLogout }) => {
     setChats((prev) => [...prev, newMsg]);
     socket.emit('send_message', { ...newMsg, sender: "other" });
     
+    // Stop typing effect when message is sent
+    socket.emit('stop_typing', currentRoomId);
+    clearTimeout(typingTimeout.current);
+
     setMessage(''); 
     setSelectedFile(null);
     setFilePreview(null);
@@ -167,7 +209,7 @@ const Chat = ({ onLogout }) => {
     }
   };
 
-  // Profile DP Handler
+  // --- Profile DP Handler ---
   const handleProfilePicChange = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -193,8 +235,25 @@ const Chat = ({ onLogout }) => {
     }
   };
 
-  const sendFriendRequest = async (e) => { /*... same as before ...*/ };
-  const acceptRequest = async (requesterEmail) => { /*... same as before ...*/ };
+  // --- Friend Request Handlers ---
+  const sendFriendRequest = async (e) => {
+    e.preventDefault();
+    if(!addEmail.trim()) return;
+    try {
+      const res = await axios.post(`${BACKEND_URL}/api/users/request`, { myEmail, targetEmail: addEmail.trim() });
+      alert(res.data.message || "Request Sent!");
+      setAddEmail('');
+    } catch (error) { alert(error.response?.data?.message || "Error sending request"); }
+  };
+
+  const acceptRequest = async (requesterEmail) => {
+    try {
+      await axios.post(`${BACKEND_URL}/api/users/accept`, { myEmail, requesterEmail });
+      alert("Friend added!");
+      fetchProfile(); 
+      setShowNotifications(false);
+    } catch (error) { alert("Error accepting request"); }
+  };
 
   const currentChats = chats.filter(chat => chat.chatId === currentRoomId);
 
@@ -211,7 +270,7 @@ const Chat = ({ onLogout }) => {
         </div>
       )}
 
-      {/* --- SIDEBAR (Same as before) --- */}
+      {/* --- SIDEBAR --- */}
       <AnimatePresence>
         {(isSidebarOpen || window.innerWidth >= 768) && (
           <motion.div initial={{ x: -300, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -300, opacity: 0 }} transition={{ type: "spring", bounce: 0, duration: 0.4 }} className={`fixed inset-y-0 left-0 z-50 w-72 lg:w-80 bg-slate-950/80 backdrop-blur-2xl border-r border-slate-800/50 flex flex-col transform md:relative md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
@@ -224,6 +283,19 @@ const Chat = ({ onLogout }) => {
                 </button>
                 <button className="md:hidden text-slate-400 hover:text-white" onClick={() => setIsSidebarOpen(false)}><X size={24} /></button>
               </div>
+            </div>
+
+            <div className="p-4 border-b border-slate-800/50">
+              <form onSubmit={sendFriendRequest} className="relative group flex items-center">
+                <input 
+                  type="email" required value={addEmail} onChange={(e) => setAddEmail(e.target.value)}
+                  placeholder="Add friend by email..." 
+                  className="w-full bg-slate-900/50 border border-slate-800 rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder-slate-600" 
+                />
+                <button type="submit" className="absolute right-2 p-1.5 text-blue-400 hover:text-blue-300 transition-colors">
+                  <UserPlus size={18} />
+                </button>
+              </form>
             </div>
 
             {/* Users List */}
@@ -250,6 +322,9 @@ const Chat = ({ onLogout }) => {
                     <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center font-bold text-white overflow-hidden border-2 border-slate-600">
                       {myProfilePic ? <img src={myProfilePic} alt="My DP" className="w-full h-full object-cover" /> : myName.charAt(0).toUpperCase()}
                     </div>
+                    <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Camera size={18} className="text-white" />
+                    </div>
                   </div>
                   <div className="flex-1 overflow-hidden">
                     <input type="text" value={myName} onChange={(e) => { setMyName(e.target.value); localStorage.setItem('candy_userName', e.target.value); }} onBlur={() => saveProfileToDB(myName, myProfilePic)} className="text-sm font-bold text-white bg-transparent border-b border-transparent hover:border-slate-600 focus:border-blue-500 focus:outline-none w-full pb-0.5 transition-colors truncate" title="Click to edit name" />
@@ -259,6 +334,37 @@ const Chat = ({ onLogout }) => {
                </div>
                <button onClick={onLogout} className="w-full py-2.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-sm font-medium transition-all">Logout</button>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- NOTIFICATION MODAL --- */}
+      <AnimatePresence>
+        {showNotifications && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="w-full max-w-sm bg-slate-900 border border-slate-700 p-6 rounded-2xl shadow-2xl">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2"><Bell size={20} className="text-purple-400"/> Notifications</h3>
+                <button onClick={() => setShowNotifications(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+              </div>
+              {friendRequests.length === 0 ? (
+                <p className="text-center text-slate-500 py-4">No new friend requests.</p>
+              ) : (
+                <div className="space-y-3">
+                  {friendRequests.map(req => (
+                    <div key={req._id} className="flex items-center justify-between p-3 bg-slate-800/50 rounded-xl border border-slate-700">
+                      <div>
+                        <p className="text-sm font-bold text-white">{req.name || 'Agent'}</p>
+                        <p className="text-[10px] text-slate-400">{req.email}</p>
+                      </div>
+                      <button onClick={() => acceptRequest(req.email)} className="p-2 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition-colors border border-emerald-500/30">
+                        <Check size={18} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -302,7 +408,7 @@ const Chat = ({ onLogout }) => {
 
                     <div className="flex items-end gap-2 max-w-[85%] md:max-w-[70%] relative">
                       
-                      {/* --- Delete Message Button (Hover on own message) --- */}
+                      {/* --- Delete Message Button --- */}
                       {chat.sender === 'me' && (
                         <button onClick={() => deleteMessage(chat.id)} className="opacity-0 group-hover:opacity-100 p-2 text-slate-500 hover:text-red-400 transition-all absolute top-1/2 -left-10 transform -translate-y-1/2">
                           <Trash2 size={16} />
@@ -344,6 +450,20 @@ const Chat = ({ onLogout }) => {
                   </motion.div>
                 ))}
               </AnimatePresence>
+
+              {/* --- Typing Indicator --- */}
+              {isTyping && (
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-2 max-w-[85%] md:max-w-[70%] text-slate-400 mt-2">
+                  <div className="w-7 h-7 rounded-full bg-slate-800 flex-shrink-0 border border-slate-700 overflow-hidden">
+                    {selectedChat.avatar ? <img src={selectedChat.avatar} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs font-bold text-slate-300">{selectedChat.name.charAt(0).toUpperCase()}</div>}
+                  </div>
+                  <div className="p-3 md:p-4 rounded-2xl bg-slate-900/80 border border-slate-800/50 rounded-bl-sm flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></span>
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></span>
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></span>
+                  </div>
+                </motion.div>
+              )}
             </div>
 
             {/* --- Message Input Area with File Preview --- */}
@@ -376,7 +496,8 @@ const Chat = ({ onLogout }) => {
                 <input type="file" ref={attachmentInputRef} onChange={handleAttachment} accept="image/*,.pdf,.doc,.docx,.txt" className="hidden" />
                 
                 <textarea
-                  value={message} onChange={(e) => setMessage(e.target.value)}
+                  value={message} 
+                  onChange={handleTyping} // <-- Typing Handler Here
                   placeholder="Type a message or attach a file..."
                   className="flex-1 bg-transparent border-none text-slate-200 placeholder-slate-500 focus:outline-none resize-none py-2.5 md:py-3.5 px-2 max-h-24 min-h-[44px] text-[14px] md:text-[15px]"
                   rows="1" onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
@@ -390,9 +511,14 @@ const Chat = ({ onLogout }) => {
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-6 p-10 text-center bg-slate-950/20 backdrop-blur-sm relative overflow-hidden">
-             {/* Welcome Screen */}
-             <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">Candy chat</h1>
-             <p className="text-slate-500">Select a chat to start messaging securely.</p>
+             <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/10 via-slate-950 to-purple-900/10" />
+             <div className="relative z-10 flex flex-col items-center gap-6">
+                 <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-blue-600/30 to-purple-600/30 flex items-center justify-center border border-purple-500/20 shadow-xl shadow-purple-500/10">
+                     <ShieldCheck size={48} className="text-purple-400" />
+                 </div>
+                 <h1 className="text-3xl md:text-4xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">Candy chat</h1>
+                 <p className="max-w-md text-slate-500 font-medium text-sm md:text-base">Welcome to the secure network. Search an agent by email in the sidebar to send a friend request.</p>
+             </div>
           </div>
         )}
       </div>

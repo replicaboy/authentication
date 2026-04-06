@@ -61,6 +61,14 @@ io.on('connection', (socket) => {
             io.emit('message_deleted', messageId); 
         } catch (error) { console.log(error); }
     });
+    // --- Typing Effect ---
+    socket.on('typing', (roomId) => {
+        socket.broadcast.emit('user_typing', roomId);
+    });
+
+    socket.on('stop_typing', (roomId) => {
+        socket.broadcast.emit('user_stopped_typing', roomId);
+    });
 
     // 3. पूरी चैट क्लियर करना (नया)
     socket.on('clear_chat', async (chatId) => {

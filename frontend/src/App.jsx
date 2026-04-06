@@ -17,7 +17,7 @@ function App() {
   const [toast, setToast] = useState({ show: false, message: '', type: '' });
 
   // अपना Backend URL यहाँ चेक कर लें
-  const API_URL = 'https://scaling-orbit-v6w4677vrxr52p96w-5000.app.github.dev/api/auth';
+  const API_URL = import.meta.env.VITE_BACKEND_URL;
 
   const showToast = (message, type) => {
     setToast({ show: true, message, type });
