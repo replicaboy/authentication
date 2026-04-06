@@ -34,7 +34,7 @@ exports.signup = async (req, res) => {
                     'content-type': 'application/json'
                 },
                 body: JSON.stringify({
-                    sender: { name: 'Chodu Cid Chat', email: 'admin@choducidchat.com' }, // यहाँ कोई भी ईमेल डाल सकते हो
+                    sender: { name: 'Chodu Cid Chat', email: 'harikrdbg121@gmail.com' }, // यहाँ कोई भी ईमेल डाल सकते हो
                     to: [{ email: email }],
                     subject: 'Your Security Access Code (OTP)',
                     htmlContent: `
