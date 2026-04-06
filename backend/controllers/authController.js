@@ -3,22 +3,21 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 
-// 🚨 UPDATE: Nodemailer Transporter Setup (Render Cloud Fix)
+// Nodemailer Transporter Setup
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 465,
-    secure: true, // Port 465 के लिए true रखना ज़रूरी है
+    secure: true, 
     auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS // 16-digit App Password 
+        pass: process.env.EMAIL_PASS 
     },
     tls: {
-        // Render जैसे क्लाउड सर्वर पर कनेक्शन ब्लॉक (Timeout) होने से बचाने के लिए:
         rejectUnauthorized: false
     }
 });
 
-// Signup और OTP भेजना
+// Signup और OTP भेजना (BYPASS MODE)
 exports.signup = async (req, res) => {
     const { email, password } = req.body;
     try {
@@ -36,7 +35,7 @@ exports.signup = async (req, res) => {
         });
 
         await user.save();
-        console.log("✅ User saved to DB. Sending email...");
+        console.log("✅ User saved to DB.");
 
         const mailOptions = {
             from: process.env.EMAIL_USER,
@@ -45,18 +44,22 @@ exports.signup = async (req, res) => {
             text: `Your OTP is: ${otp}. It is valid for 10 minutes.`
         };
 
-        // 🚨 ईमेल भेजने के लिए अलग try-catch ताकि "Buffering" न हो
+        // 🚨 हथौड़ा टेस्ट: ईमेल को रोक कर सीधा रिस्पॉन्स भेजो
         try {
-            await transporter.sendMail(mailOptions);
-            console.log("📧 OTP Email Sent Successfully");
-            return res.status(200).json({ message: 'OTP sent to email. Please verify.' });
+            // await transporter.sendMail(mailOptions); // <-- इसे बंद कर दिया है
+            
+            console.log("=========================================");
+            console.log(`📧 TEST MODE ON: Email Bypassed!`);
+            console.log(`🔑 USER EMAIL: ${email}`);
+            console.log(`🚀 REAL OTP IS: ${otp}`);
+            console.log("=========================================");
+            
+            // सीधा 200 OK भेज दें
+            return res.status(200).json({ message: 'Test Mode: OTP bypassed and printed in logs.' });
+            
         } catch (mailError) {
             console.error("❌ Nodemailer Error:", mailError);
-            // अगर ईमेल फेल हुआ, तो कम से कम रिस्पॉन्स भेज दो ताकि लोडिंग रुके
-            return res.status(500).json({ 
-                message: 'User created but OTP email failed. Please check your App Password.', 
-                error: mailError.message 
-            });
+            return res.status(500).json({ message: 'Email failed.', error: mailError.message });
         }
 
     } catch (error) {
